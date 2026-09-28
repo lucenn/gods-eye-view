@@ -22,12 +22,38 @@
         <button class="panel-collapse-btn" data-collapse-target="cctv-panel" title="Collapse panel">+</button>
       </div>
       <div class="cyber-panel-body" data-rail-scroller>
+      <button id="cctv-des-moines-live-btn" class="scene-btn cctv-quick-start">DES MOINES LIVE</button>
+      <div id="cctv-des-moines-summary" class="cctv-browse-summary" hidden></div>
+      <div id="cctv-active-info" class="cctv-active-info" hidden>
+        <strong id="cctv-active-name"></strong>
+        <span id="cctv-active-detail"></span>
+      </div>
       <div id="cctv-frame-wrap" class="cctv-frame-wrap">
         <img id="cctv-frame" alt="CCTV feed frame" />
         <canvas id="cctv-video" class="cctv-frame" hidden></canvas>
+        <div id="cctv-video-feedback" class="cctv-video-feedback" role="status" aria-live="polite">NO CAMERA</div>
       </div>
       <div id="cctv-source-badge" role="status" aria-live="polite">SOURCE · UNKNOWN</div>
       <div id="cctv-meta">Enable CCTV to load camera intersections</div>
+      <div class="cctv-browse-grid">
+        <label>REGION
+          <select id="cctv-region-filter" aria-label="CCTV region">
+            <option value="all">ALL CAMERAS</option>
+            <option value="des-moines">DES MOINES</option>
+          </select>
+        </label>
+        <label>ROUTE
+          <select id="cctv-route-filter" aria-label="CCTV route">
+            <option value="all">ALL</option>
+          </select>
+        </label>
+      </div>
+      <div class="cctv-feed-filter" role="group" aria-label="CCTV feed type">
+        <button class="scene-btn active" data-cctv-feed="all" aria-pressed="true">ALL</button>
+        <button class="scene-btn" data-cctv-feed="video" aria-pressed="false">VIDEO</button>
+        <button class="scene-btn" data-cctv-feed="image" aria-pressed="false">IMAGE</button>
+      </div>
+      <input id="cctv-search" type="search" autocomplete="off" aria-label="Search CCTV cameras" placeholder="SEARCH I-235 / 42ND / ANKENY" />
       <div class="cctv-controls">
         <button id="cctv-enable-btn" class="scene-btn">CCTV OFF</button>
         <button id="cctv-nearest-btn" class="scene-btn">NEAREST</button>

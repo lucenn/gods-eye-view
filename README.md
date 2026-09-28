@@ -469,10 +469,18 @@ URL play through a lazily loaded hls.js decoder shared by the monitor plane
 and panel. DelDOT uses its official HTTPS HLS catalog links. Disable that
 pack with `CCTV_DELDOT_ENABLED=0`.
 
+For Central Iowa, open the CCTV panel and press **DES MOINES LIVE**. The app
+chooses a nearby Iowa DOT video camera, flies to it and starts its projected
+feed. Use Region, Route, Type and Search to browse the current catalog; VIDEO
+means video-capable and IMAGE means image-only. Iowa video commonly needs a
+few seconds to connect, and its official JPEG is used if playback degrades.
+
 The server allows two concurrent sessions. Each retains at most 12 segments
 and 24 MiB in memory; individual downloads are capped at 4 MiB with a ten
 second deadline. There are no segment files or ffmpeg processes. Redirects,
-off-origin references, encrypted playlists and non-MPEG-TS segments are refused.
+off-origin references, encrypted playlists and unsupported segment containers
+are refused. The relay accepts its original MPEG-TS format plus the clear,
+single-init fragmented-MP4 format used by Iowa DOT.
 Each decoder has its own client lease (at most eight per session), including
 native HLS. Closing it releases only that lease; abandoned leases expire after
 15 seconds without access. The last release stops upstream work. Failed live video
