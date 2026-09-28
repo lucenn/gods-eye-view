@@ -6,6 +6,7 @@ import {
   iowaDotCameraToSource,
   loadIowaDotSourcesFromOpenData,
   normalizeIowaDotImageUrl,
+  normalizeIowaDotRoute,
   normalizeIowaDotVideoUrl,
 } from '../../server/providers/cctv/sources.js';
 import { IOWADOT_CCTV_URL } from '../../server/providers/cctv/constants.js';
@@ -36,6 +37,14 @@ test('an Iowa DOT row maps to a stable, geographically scoped image source', () 
   assert.equal(source.feedType, 'hls');
   assert.notEqual(source.url, source.snapshotUrl);
   assert.equal(source.sourceKind, 'iowadot-open-data');
+  assert.equal(source.route, 'I-35');
+});
+
+test('Iowa route metadata is compact and sanitized', () => {
+  assert.equal(normalizeIowaDotRoute('Interstate 235'), 'I-235');
+  assert.equal(normalizeIowaDotRoute('I 80'), 'I-80');
+  assert.equal(normalizeIowaDotRoute('US 65'), 'US 65');
+  assert.equal(normalizeIowaDotRoute('<script>'), '');
 });
 
 test('distance and coordinate validation exclude invalid or out-of-area rows', () => {

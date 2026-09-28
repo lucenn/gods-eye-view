@@ -485,6 +485,9 @@ export function normalizeSourceItem(item) {
     name: String(item.name || item.id || '').trim(),
     city: String(item.city || ''),
     cityId: String(item.cityId || ''),
+    route: String(item.route || '')
+      .trim()
+      .slice(0, 40),
     provider: String(item.provider || 'Configured CCTV Source'),
     lat: toFiniteNumber(item.lat),
     lon: toFiniteNumber(item.lon),

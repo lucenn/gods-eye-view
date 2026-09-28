@@ -148,6 +148,7 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
               name: source.name,
               city: source.city,
               cityId: source.cityId,
+              route: source.route || '',
               provider: source.provider,
               lat: source.lat,
               lon: source.lon,

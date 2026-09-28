@@ -1752,6 +1752,18 @@ export function normalizeIowaDotVideoUrl(value) {
   }
 }
 
+/** Preserve a compact, display-safe Iowa DOT route identifier. */
+export function normalizeIowaDotRoute(value) {
+  const route = String(value || '')
+    .trim()
+    .replace(/\s+/g, ' ')
+    .slice(0, 40);
+  if (!route || !/^[A-Za-z0-9 ./'()-]+$/.test(route)) return '';
+  const interstate = /^(?:INTERSTATE|I)[\s-]*(\d+[A-Z]?)$/i.exec(route);
+  if (interstate) return `I-${interstate[1].toUpperCase()}`;
+  return route;
+}
+
 /** Stable, namespaced identifier using the best official key available. */
 export function iowaDotCameraId(record) {
   for (const value of [record?.COMMON_ID, record?.device_id]) {
@@ -1793,7 +1805,7 @@ export function iowaDotCameraToSource(
   const videoUrl = normalizeIowaDotVideoUrl(record.VideoURL);
 
   const description = String(record.Desc_ || '').trim();
-  const route = String(record.Route || '').trim();
+  const route = normalizeIowaDotRoute(record.Route);
   const commonId = String(record.COMMON_ID || '').trim();
   const deviceId = String(record.device_id || '').trim();
   const name =
@@ -1823,6 +1835,7 @@ export function iowaDotCameraToSource(
     sourceKind: 'iowadot-open-data',
     license: 'Public Iowa DOT traffic camera data',
     code: cameraDisplayCode(name.toUpperCase()),
+    route,
   };
 }
 
