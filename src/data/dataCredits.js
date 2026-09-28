@@ -165,6 +165,12 @@ export const DATA_CREDITS = [
       '<a href="https://its.txdot.gov/" target="_blank" rel="noopener">Texas Department of Transportation</a> (courtesy)',
   },
   {
+    key: 'iowadot-cctv',
+    html:
+      'CCTV cameras &amp; frames (Central Iowa): ' +
+      '<a href="https://services.arcgis.com/8lRhdTsQyJpO52F1/arcgis/rest/services/Traffic_Cameras_View/FeatureServer/0" target="_blank" rel="noopener">Iowa Department of Transportation</a> (courtesy)',
+  },
+  {
     key: 'deldot-cctv',
     html: 'CCTV live video (Delaware): <a href="https://deldot.gov/map/" target="_blank" rel="noopener">DelDOT — Delaware Department of Transportation</a>',
   },

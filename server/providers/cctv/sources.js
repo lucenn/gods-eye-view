@@ -59,6 +59,13 @@ import {
   DELDOT_CCTV_URL,
   DEFAULT_DELDOT_MAX_SOURCES,
   DELDOT_ANCHORS,
+  IOWADOT_CCTV_URL,
+  DES_MOINES_CENTER,
+  DEFAULT_IOWADOT_RADIUS_KM,
+  DEFAULT_IOWADOT_MAX_SOURCES,
+  IOWADOT_MAX_CATALOG_BYTES,
+  IOWADOT_IMAGE_HOST,
+  IOWADOT_VIDEO_HOSTS,
 } from './constants.js';
 import {
   toFiniteNumber,
@@ -81,6 +88,7 @@ import {
   prioritizeSources,
 } from './normalize.js';
 import { directionToHeading } from '../../../src/data/directionText.js';
+import { haversineKm } from '../common/geo.js';
 import { readResponseJsonCapped } from '../common/http.js';
 /**
  * Fetch and parse Austin traffic camera records from the city Open Data portal.
@@ -1696,6 +1704,193 @@ export async function loadDelDOTSourcesFromOpenData() {
   } catch (error) {
     console.warn(
       '[CCTV] DelDOT source download error:',
+      error?.message || error,
+    );
+    return [];
+  }
+}
+
+/** Accept only current official Iowa DOT JPEG snapshot URLs. */
+export function normalizeIowaDotImageUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (
+      url.protocol !== 'https:' ||
+      url.hostname.toLowerCase() !== IOWADOT_IMAGE_HOST ||
+      url.port ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^\/SNAPSHOTS\/PUBLIC\/[A-Za-z0-9/_-]+\.jpe?g$/i.test(url.pathname)
+    )
+      return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Recognize official Iowa DOT video catalog URLs for diagnostics only.
+ * Their media playlists currently use fMP4 EXT-X-MAP segments, which the
+ * existing MPEG-TS relay intentionally rejects, so these are not registered.
+ */
+export function normalizeIowaDotVideoUrl(value) {
+  try {
+    const url = new URL(String(value || '').trim());
+    if (
+      url.protocol !== 'https:' ||
+      !IOWADOT_VIDEO_HOSTS.includes(url.hostname.toLowerCase()) ||
+      url.port !== '8888' ||
+      url.username ||
+      url.password ||
+      url.search ||
+      url.hash ||
+      !/^\/[A-Za-z0-9/_-]+\/playlist\.m3u8$/i.test(url.pathname)
+    )
+      return null;
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+/** Stable, namespaced identifier using the best official key available. */
+export function iowaDotCameraId(record) {
+  for (const value of [record?.COMMON_ID, record?.device_id]) {
+    const key = String(value ?? '').trim();
+    if (/^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$/.test(key)) {
+      return `iowadot-${key.toLowerCase()}`;
+    }
+  }
+  return null;
+}
+
+/** Map one ArcGIS attributes object into the canonical image-camera shape. */
+export function iowaDotCameraToSource(
+  record,
+  { radiusKm = DEFAULT_IOWADOT_RADIUS_KM } = {},
+) {
+  if (!record || typeof record !== 'object') return null;
+  if (
+    record.latitude === null ||
+    record.latitude === undefined ||
+    String(record.latitude).trim() === '' ||
+    record.longitude === null ||
+    record.longitude === undefined ||
+    String(record.longitude).trim() === ''
+  )
+    return null;
+  const lat = toFiniteNumber(record.latitude);
+  const lon = toFiniteNumber(record.longitude);
+  if (!isPlausibleLatLon(lat, lon)) return null;
+  if (
+    haversineKm(DES_MOINES_CENTER.lat, DES_MOINES_CENTER.lon, lat, lon) >
+    radiusKm
+  )
+    return null;
+
+  const id = iowaDotCameraId(record);
+  const imageUrl = normalizeIowaDotImageUrl(record.ImageURL);
+  if (!id || !imageUrl) return null;
+
+  const description = String(record.Desc_ || '').trim();
+  const route = String(record.Route || '').trim();
+  const commonId = String(record.COMMON_ID || '').trim();
+  const deviceId = String(record.device_id || '').trim();
+  const name =
+    description ||
+    (route && commonId ? `${route} · ${commonId}` : '') ||
+    commonId ||
+    deviceId;
+
+  return {
+    id,
+    name,
+    city: 'Des Moines Area',
+    cityId: 'des-moines-iowa',
+    provider: 'Iowa DOT',
+    lat,
+    lon,
+    headingDeg: fallbackHeadingFromId(id),
+    headingConfidence: 'low',
+    pitchDeg: -18,
+    fovDeg: 44,
+    rangeM: 145,
+    mountHeightM: 10,
+    groundElevationM: 290, // Central Iowa prior; client ground resolution owns placement.
+    feedType: 'image',
+    url: imageUrl,
+    snapshotUrl: imageUrl,
+    sourceKind: 'iowadot-open-data',
+    license: 'Public Iowa DOT traffic camera data',
+    code: cameraDisplayCode(name.toUpperCase()),
+  };
+}
+
+/** Fetch the official ArcGIS catalog and return Des Moines-area still cameras. */
+export async function loadIowaDotSourcesFromOpenData() {
+  try {
+    const endpoint = new URL(IOWADOT_CCTV_URL);
+    endpoint.searchParams.set('where', '1=1');
+    endpoint.searchParams.set(
+      'outFields',
+      'COMMON_ID,device_id,Desc_,Route,ImageURL,VideoURL,latitude,longitude',
+    );
+    endpoint.searchParams.set('returnGeometry', 'false');
+    endpoint.searchParams.set('f', 'json');
+    const resp = await fetch(endpoint, {
+      headers: { Accept: 'application/json' },
+      redirect: 'error',
+      signal: AbortSignal.timeout(CCTV_SOURCE_FETCH_TIMEOUT_MS),
+    });
+    if (!resp.ok) {
+      try {
+        await resp.body?.cancel();
+      } catch {
+        /* no-op */
+      }
+      console.warn('[CCTV] Iowa DOT camera download failed:', resp.status);
+      return [];
+    }
+    const payload = await readResponseJsonCapped(
+      resp,
+      IOWADOT_MAX_CATALOG_BYTES,
+    );
+    if (!Array.isArray(payload?.features)) return [];
+
+    const radiusRaw = Number(
+      process.env.CCTV_IOWADOT_RADIUS_KM || DEFAULT_IOWADOT_RADIUS_KM,
+    );
+    const radiusKm = Number.isFinite(radiusRaw)
+      ? Math.max(1, Math.min(250, radiusRaw))
+      : DEFAULT_IOWADOT_RADIUS_KM;
+    const cameras = [];
+    const seen = new Set();
+    for (const feature of payload.features) {
+      const camera = iowaDotCameraToSource(feature?.attributes, { radiusKm });
+      if (!camera || seen.has(camera.id)) continue;
+      seen.add(camera.id);
+      cameras.push(camera);
+    }
+
+    const maxRaw = Number(
+      process.env.CCTV_IOWADOT_MAX_SOURCES || DEFAULT_IOWADOT_MAX_SOURCES,
+    );
+    const maxCount = Number.isFinite(maxRaw)
+      ? Math.max(8, Math.min(500, Math.floor(maxRaw)))
+      : DEFAULT_IOWADOT_MAX_SOURCES;
+    const prioritized = prioritizeSources(cameras, maxCount, [
+      DES_MOINES_CENTER,
+    ]);
+    console.log(
+      `[CCTV] Loaded Iowa DOT camera sources: ${cameras.length} inside ${radiusKm} km (using nearest ${prioritized.length})`,
+    );
+    return prioritized;
+  } catch (error) {
+    console.warn(
+      '[CCTV] Iowa DOT camera download error:',
       error?.message || error,
     );
     return [];

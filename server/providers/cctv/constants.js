@@ -244,6 +244,18 @@ export const DELDOT_ANCHORS = [
   { lat: 39.1582, lon: -75.5244 }, // Dover (Kent)
   { lat: 38.6906, lon: -75.3877 }, // Georgetown (Sussex)
 ];
+/** Iowa DOT traffic cameras: official ArcGIS catalog, scoped to Central Iowa. */
+export const IOWADOT_CCTV_URL =
+  'https://services.arcgis.com/8lRhdTsQyJpO52F1/arcgis/rest/services/Traffic_Cameras_View/FeatureServer/0/query';
+export const DES_MOINES_CENTER = { lat: 41.5868, lon: -93.625 };
+export const DEFAULT_IOWADOT_RADIUS_KM = 75;
+export const DEFAULT_IOWADOT_MAX_SOURCES = 300;
+export const IOWADOT_MAX_CATALOG_BYTES = 8 * 1024 * 1024;
+export const IOWADOT_IMAGE_HOST = 'atmsqf.iowadot.gov';
+export const IOWADOT_VIDEO_HOSTS = Object.freeze([
+  'video3.iowadot.gov',
+  'video4.iowadot.gov',
+]);
 /** Camera CATALOGS change rarely; 15 min keeps multi-megabyte upstream list refetches (Austin rows.json + 4 Caltrans districts + TfL + Ontario 511) infrequent. Frames are fetched per-request and are unaffected. */
 export const CCTV_SOURCE_CACHE_MS = 15 * 60 * 1000;
 /** Per-provider catalog-fetch timeout. Bounds the worst-case refresh so one
