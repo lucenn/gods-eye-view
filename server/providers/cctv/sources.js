@@ -1731,11 +1731,7 @@ export function normalizeIowaDotImageUrl(value) {
   }
 }
 
-/**
- * Recognize official Iowa DOT video catalog URLs for diagnostics only.
- * Their media playlists currently use fMP4 EXT-X-MAP segments, which the
- * existing MPEG-TS relay intentionally rejects, so these are not registered.
- */
+/** Accept only the official Iowa DOT fMP4 HLS master-playlist URLs. */
 export function normalizeIowaDotVideoUrl(value) {
   try {
     const url = new URL(String(value || '').trim());
@@ -1794,6 +1790,7 @@ export function iowaDotCameraToSource(
   const id = iowaDotCameraId(record);
   const imageUrl = normalizeIowaDotImageUrl(record.ImageURL);
   if (!id || !imageUrl) return null;
+  const videoUrl = normalizeIowaDotVideoUrl(record.VideoURL);
 
   const description = String(record.Desc_ || '').trim();
   const route = String(record.Route || '').trim();
@@ -1820,8 +1817,8 @@ export function iowaDotCameraToSource(
     rangeM: 145,
     mountHeightM: 10,
     groundElevationM: 290, // Central Iowa prior; client ground resolution owns placement.
-    feedType: 'image',
-    url: imageUrl,
+    feedType: videoUrl ? 'hls' : 'image',
+    url: videoUrl || imageUrl,
     snapshotUrl: imageUrl,
     sourceKind: 'iowadot-open-data',
     license: 'Public Iowa DOT traffic camera data',

@@ -3,16 +3,19 @@ import assert from 'node:assert/strict';
 import {
   createHlsPuller,
   fetchHlsBytes,
+  hlsResourceContentType,
   parseHlsMedia,
   HLS_LIMITS,
 } from '../../server/providers/cctv/stream.js';
 const playlist =
   '#EXTM3U\n#EXT-X-MEDIA-SEQUENCE:12\n#EXTINF:2,\na.ts\n#EXTINF:2,\nb.ts\n#EXTINF:2,\nc.ts\n';
 const base = 'https://camera.example/live/list.m3u8';
+const fmp4Playlist =
+  '#EXTM3U\n#EXT-X-VERSION:10\n#EXT-X-MEDIA-SEQUENCE:20\n#EXT-X-MAP:URI="init.mp4"\n#EXTINF:2,\na.mp4\n#EXTINF:2,\nb.mp4\n#EXTINF:2,\nc.mp4\n';
 
 test('playlist parser uses sequence, refuses escaping and unsupported references', () => {
   assert.deepEqual(
-    parseHlsMedia(playlist, base).map((s) => s.seq),
+    parseHlsMedia(playlist, base).segments.map((s) => s.seq),
     [12, 13, 14],
   );
   for (const bad of [
@@ -23,6 +26,53 @@ test('playlist parser uses sequence, refuses escaping and unsupported references
     playlist.replace('2,', 'Infinity,'),
   ])
     assert.throws(() => parseHlsMedia(bad, base));
+});
+
+test('fMP4 parser accepts one same-origin init and clear MP4 fragments', () => {
+  const parsed = parseHlsMedia(fmp4Playlist, base);
+  assert.equal(parsed.transport, 'fmp4');
+  assert.equal(parsed.version, 10);
+  assert.equal(parsed.initUri, 'https://camera.example/live/init.mp4');
+  assert.deepEqual(
+    parsed.segments.map((segment) => [segment.seq, segment.uri]),
+    [
+      [20, 'https://camera.example/live/a.mp4'],
+      [21, 'https://camera.example/live/b.mp4'],
+      [22, 'https://camera.example/live/c.mp4'],
+    ],
+  );
+  assert.equal(
+    parseHlsMedia(
+      fmp4Playlist.replace(
+        'URI="init.mp4"',
+        'URI="https://camera.example/live/init.mp4"',
+      ),
+      base,
+    ).initUri,
+    'https://camera.example/live/init.mp4',
+  );
+});
+
+test('fMP4 parser rejects escaping, encryption, byte ranges and mixed containers', () => {
+  for (const bad of [
+    fmp4Playlist.replace('init.mp4', 'https://evil.example/init.mp4'),
+    fmp4Playlist.replace('a.mp4', 'https://evil.example/a.mp4'),
+    fmp4Playlist.replace('#EXTINF:2,', '#EXT-X-BYTERANGE:100@0\n#EXTINF:2,'),
+    '#EXT-X-KEY:METHOD=AES-128\n' + fmp4Playlist,
+    fmp4Playlist.replace('a.mp4', 'a.ts'),
+    fmp4Playlist.replace('URI="init.mp4"', 'URI="init.mp4",BYTERANGE="100@0"'),
+    fmp4Playlist.replace(
+      '#EXT-X-MAP:URI="init.mp4"\n',
+      '#EXTINF:2,\na.ts\n#EXT-X-MAP:URI="init.mp4"\n',
+    ),
+  ]) {
+    assert.throws(() => parseHlsMedia(bad, base));
+  }
+});
+
+test('HLS resource MIME types distinguish MPEG-TS and fragmented MP4', () => {
+  assert.equal(hlsResourceContentType('mpegts'), 'video/mp2t');
+  assert.equal(hlsResourceContentType('fmp4'), 'video/mp4');
 });
 
 test('downloads reject redirect responses, oversized declared and chunked bodies', async () => {
@@ -150,9 +200,98 @@ test('upstream discontinuity tags survive the media parser', () => {
   const parsed = parseHlsMedia(
     playlist.replace('a.ts', 'a.ts\n#EXT-X-DISCONTINUITY'),
     base,
-  );
+  ).segments;
   assert.equal(parsed[0].discontinuity, false);
   assert.equal(parsed[1].discontinuity, true);
+});
+
+test('fMP4 init and media share the bounded cache, lease and cleanup lifecycle', async () => {
+  const manager = createHlsPuller({
+    limits: {
+      ...HLS_LIMITS,
+      segmentBytes: 16,
+      sessionBytes: 12,
+      segments: 2,
+      pollMs: 100000,
+    },
+    fetchImpl: async (url) => {
+      if (url.endsWith('.m3u8')) return new Response(fmp4Playlist);
+      if (url.endsWith('init.mp4')) return new Response('init');
+      return new Response('seg');
+    },
+  });
+  const entry = await manager.ensure('iowa', base, 'viewer-a');
+  assert.equal(await manager.waitReady(entry), true);
+  assert.deepEqual(manager.stats(), { sessions: 1, bytes: 10 });
+  const local = await manager.buildPlaylist(entry, 'iowa', 'viewer-a');
+  assert.match(local, /#EXT-X-VERSION:10/);
+  assert.match(
+    local,
+    /#EXT-X-MAP:URI="\/api\/cctv\/media\/iowa\/init\.mp4\?session=/,
+  );
+  assert.match(local, /#EXT-X-MEDIA-SEQUENCE:0/);
+  assert.match(local, /#EXTINF:2\.000,\n\/api\/cctv\/media\/iowa\/seg_0\.mp4/);
+  assert.equal(manager.getInit('iowa', 'stale', 'viewer-a'), null);
+  assert.equal(manager.getInit('iowa', entry.token, 'wrong-lease'), null);
+  assert.equal(
+    manager.getInit('iowa', entry.token, 'viewer-a').toString(),
+    'init',
+  );
+  assert.equal(
+    manager.getSegment('iowa', entry.token, 0, 'viewer-a', 'mpegts'),
+    null,
+  );
+  assert.equal(
+    manager.getSegment('iowa', entry.token, 0, 'viewer-a', 'fmp4').toString(),
+    'seg',
+  );
+  manager.release('iowa', 'viewer-a');
+  assert.deepEqual(manager.stats(), { sessions: 0, bytes: 0 });
+  assert.equal(entry.init, null);
+  assert.equal(entry.segments.size, 0);
+  await manager.shutdown();
+});
+
+test('an upstream initialization change discards stale init and media bytes', async () => {
+  let generation = 'a';
+  const manifest = () =>
+    fmp4Playlist
+      .replace('init.mp4', `init-${generation}.mp4`)
+      .replaceAll('.mp4\n', `-${generation}.mp4\n`);
+  const manager = createHlsPuller({
+    limits: { ...HLS_LIMITS, pollMs: 5 },
+    fetchImpl: async (url) => {
+      if (url.endsWith('.m3u8')) return new Response(manifest());
+      if (url.includes('init-')) return new Response(`init-${generation}`);
+      return new Response(`seg-${generation}`);
+    },
+  });
+  const entry = await manager.ensure('iowa', base, 'viewer');
+  await manager.waitReady(entry);
+  assert.equal(
+    manager.getInit('iowa', entry.token, 'viewer').toString(),
+    'init-a',
+  );
+  generation = 'b';
+  await new Promise((resolve) => setTimeout(resolve, 30));
+  assert.equal(
+    manager.getInit('iowa', entry.token, 'viewer').toString(),
+    'init-b',
+  );
+  assert.ok(
+    [...entry.segments.values()].every(
+      (segment) => segment.body.toString() === 'seg-b',
+    ),
+  );
+  assert.equal(
+    manager.stats().bytes,
+    Buffer.byteLength('init-b') +
+      [...entry.segments.values()].reduce(
+        (total, segment) => total + segment.body.length,
+        0,
+      ),
+  );
+  await manager.shutdown();
 });
 
 test('a reused agency sequence with changed segment URI cannot remain stale', async () => {

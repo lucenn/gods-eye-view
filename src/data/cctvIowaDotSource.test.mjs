@@ -33,8 +33,8 @@ test('an Iowa DOT row maps to a stable, geographically scoped image source', () 
   assert.equal(source.cityId, 'des-moines-iowa');
   assert.equal(source.provider, 'Iowa DOT');
   assert.equal(source.headingConfidence, 'low');
-  assert.equal(source.feedType, 'image');
-  assert.equal(source.url, source.snapshotUrl);
+  assert.equal(source.feedType, 'hls');
+  assert.notEqual(source.url, source.snapshotUrl);
   assert.equal(source.sourceKind, 'iowadot-open-data');
 });
 
@@ -50,12 +50,15 @@ test('distance and coordinate validation exclude invalid or out-of-area rows', (
   assert.equal(iowaDotCameraToSource(camera({ longitude: undefined })), null);
 });
 
-test('official media URLs are pinned and fMP4 HLS stays image-only', () => {
+test('official fMP4 HLS is registered with its JPEG fallback', () => {
   const image = camera().ImageURL;
   const video = camera().VideoURL;
   assert.equal(normalizeIowaDotImageUrl(image), image);
   assert.equal(normalizeIowaDotVideoUrl(video), video);
-  assert.equal(iowaDotCameraToSource(camera()).feedType, 'image');
+  const source = iowaDotCameraToSource(camera());
+  assert.equal(source.feedType, 'hls');
+  assert.equal(source.url, video);
+  assert.equal(source.snapshotUrl, image);
 
   for (const value of [
     'http://atmsqf.iowadot.gov/SNAPSHOTS/PUBLIC/DMTV114.jpeg',
