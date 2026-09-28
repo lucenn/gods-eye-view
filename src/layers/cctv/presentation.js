@@ -75,6 +75,9 @@ export function createPresentation({
       id: camera.id,
       name: camera.name,
       city: camera.city,
+      cityId: camera.cityId || '',
+      route: camera.route || '',
+      code: camera.code || '',
       provider: camera.provider,
       lat: camera.lat,
       lon: camera.lon,
@@ -91,6 +94,16 @@ export function createPresentation({
       mountHeightM: camera.mountHeightM,
       active: isActive,
       feedType: camera.feedType,
+      videoCapable: parts.model.isVideoFeedType(camera.feedType),
+      playbackState: parts.model.isVideoFeedType(camera.feedType)
+        ? record.projection?.mode === 'image'
+          ? 'fallback'
+          : record.projection?.video?.readyState >= 2 &&
+              record.projection.video.videoWidth > 0 &&
+              record.projection.video.videoHeight > 0
+            ? 'playing'
+            : 'connecting'
+        : 'image',
       isVideo:
         parts.model.isVideoFeedType(camera.feedType) &&
         record.projection?.mode !== 'image',

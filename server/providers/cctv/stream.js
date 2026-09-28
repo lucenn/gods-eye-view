@@ -82,23 +82,40 @@ export function sameOriginHlsUrl(value, base) {
   return url.href;
 }
 
-/** Only clear MPEG-TS media playlists: encrypted, fMP4 and byte ranges fail closed. */
+/** Parse only clear MPEG-TS or single-init fMP4 media playlists. */
 export function parseHlsMedia(text, base, limit = HLS_LIMITS.segments) {
   if (
     !text.startsWith('#EXTM3U') ||
-    /#EXT-X-(?:KEY|MAP|BYTERANGE|I-FRAMES-ONLY)/.test(text)
+    /#EXT-X-(?:KEY|BYTERANGE|I-FRAMES-ONLY)/.test(text)
   )
     throw new Error('Unsupported HLS playlist');
   let seq = 0;
   let duration = null;
   let discontinuity = false;
+  let version = 3;
+  let initUri = null;
   const segments = [];
   for (const raw of text.split('\n')) {
     const line = raw.trim();
-    if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
+    if (line.startsWith('#EXT-X-VERSION:')) {
+      version = Number(line.slice(15));
+      if (!Number.isSafeInteger(version) || version < 1 || version > 20)
+        throw new Error('Invalid HLS version');
+    } else if (line.startsWith('#EXT-X-MEDIA-SEQUENCE:')) {
       seq = Number(line.slice(22));
       if (!Number.isSafeInteger(seq) || seq < 0)
         throw new Error('Invalid media sequence');
+    } else if (line.startsWith('#EXT-X-MAP:')) {
+      const match = /^#EXT-X-MAP:URI="([^"]+)"$/.exec(line);
+      if (!match) throw new Error('Unsupported HLS initialization map');
+      if (segments.length)
+        throw new Error('HLS initialization map follows media');
+      const resolved = sameOriginHlsUrl(match[1], base);
+      if (!/\.(?:mp4|m4s)$/i.test(new URL(resolved).pathname))
+        throw new Error('Unsupported HLS initialization segment');
+      if (initUri && initUri !== resolved)
+        throw new Error('Multiple HLS initialization segments');
+      initUri = resolved;
     } else if (line === '#EXT-X-DISCONTINUITY') {
       discontinuity = true;
     } else if (line.startsWith('#EXTINF:')) {
@@ -109,14 +126,27 @@ export function parseHlsMedia(text, base, limit = HLS_LIMITS.segments) {
       if (duration === null || !Number.isSafeInteger(seq))
         throw new Error('Invalid HLS segment');
       const uri = sameOriginHlsUrl(line, base);
-      if (!new URL(uri).pathname.endsWith('.ts'))
-        throw new Error('Only MPEG-TS segments are supported');
+      const pathname = new URL(uri).pathname;
+      if (
+        (initUri && !/\.(?:mp4|m4s)$/i.test(pathname)) ||
+        (!initUri && !/\.ts$/i.test(pathname))
+      )
+        throw new Error('Unsupported HLS segment container');
       segments.push({ seq: seq++, duration, uri, discontinuity });
       discontinuity = false;
       duration = null;
     }
   }
-  return segments.slice(-limit);
+  return {
+    version,
+    transport: initUri ? 'fmp4' : 'mpegts',
+    initUri,
+    segments: segments.slice(-limit),
+  };
+}
+
+export function hlsResourceContentType(resource) {
+  return resource === 'mpegts' ? 'video/mp2t' : 'video/mp4';
 }
 
 export function createHlsPuller({
@@ -136,6 +166,7 @@ export function createHlsPuller({
     entry.leases.clear();
     entry.segments.clear();
     entry.upstream.clear();
+    entry.init = null;
     entry.bytes = 0;
   };
   const release = (cameraId, leaseId) => {
@@ -185,7 +216,31 @@ export function createHlsPuller({
         text = (await read(entry, base, limits.playlistBytes)).toString('utf8');
       }
       entry.chunklistUrl = base;
-      const segments = parseHlsMedia(text, base, limits.segments);
+      const parsed = parseHlsMedia(text, base, limits.segments);
+      const { segments } = parsed;
+      const containerChanged =
+        entry.transport && entry.transport !== parsed.transport;
+      const initChanged =
+        parsed.transport === 'fmp4' &&
+        entry.init &&
+        entry.init.uri !== parsed.initUri;
+      if (containerChanged || initChanged) {
+        entry.segments.clear();
+        entry.upstream.clear();
+        entry.bytes = 0;
+        entry.init = null;
+        entry.pendingDiscontinuity = true;
+      }
+      if (parsed.transport === 'fmp4' && !entry.init) {
+        const body = await read(entry, parsed.initUri, limits.segmentBytes);
+        if (entry.stopping) return;
+        if (body.length > limits.sessionBytes)
+          throw new Error('Initialization segment exceeds session budget');
+        entry.init = { uri: parsed.initUri, body };
+        entry.bytes = body.length;
+      }
+      entry.transport = parsed.transport;
+      entry.playlistVersion = parsed.version;
       const newest = segments.at(-1)?.seq ?? -1;
       const restarted =
         newest < entry.upstreamNewest ||
@@ -216,7 +271,7 @@ export function createHlsPuller({
           if (removed.discontinuity) entry.discontinuitiesRemoved++;
           entry.segments.delete(oldest);
         }
-        if (body.length > limits.sessionBytes)
+        if (entry.bytes + body.length > limits.sessionBytes)
           throw new Error('Segment exceeds session budget');
         const seq = entry.nextSeq++;
         entry.segments.set(seq, {
@@ -278,6 +333,9 @@ export function createHlsPuller({
       upstreamNewest: -1,
       pendingDiscontinuity: false,
       discontinuitiesRemoved: 0,
+      init: null,
+      transport: null,
+      playlistVersion: 3,
     };
     active.set(cameraId, entry);
     touch(entry, leaseId, true);
@@ -287,7 +345,11 @@ export function createHlsPuller({
   const waitReady = async (entry, signal) => {
     const until = Date.now() + limits.readyMs;
     while (!entry.stopping && !signal?.aborted && Date.now() < until) {
-      if (entry.segments.size >= 2) return true;
+      if (
+        entry.segments.size >= 2 &&
+        (entry.transport !== 'fmp4' || entry.init?.body)
+      )
+        return true;
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     return false;
@@ -298,11 +360,17 @@ export function createHlsPuller({
     const segments = [...entry.segments.values()].sort((a, b) => a.seq - b.seq);
     const lines = [
       '#EXTM3U',
-      '#EXT-X-VERSION:3',
+      `#EXT-X-VERSION:${entry.transport === 'fmp4' ? Math.max(7, entry.playlistVersion) : 3}`,
       `#EXT-X-TARGETDURATION:${Math.ceil(Math.max(...segments.map((s) => s.duration)))}`,
       `#EXT-X-MEDIA-SEQUENCE:${segments[0].seq}`,
       `#EXT-X-DISCONTINUITY-SEQUENCE:${entry.discontinuitiesRemoved}`,
     ];
+    if (entry.transport === 'fmp4') {
+      lines.push(
+        `#EXT-X-MAP:URI="/api/cctv/media/${encodeURIComponent(cameraId)}/init.mp4?session=${entry.token}&lease=${encodeURIComponent(leaseId)}"`,
+      );
+    }
+    const extension = entry.transport === 'fmp4' ? 'mp4' : 'ts';
     let previous;
     for (const segment of segments) {
       if (
@@ -312,17 +380,35 @@ export function createHlsPuller({
         lines.push('#EXT-X-DISCONTINUITY');
       lines.push(
         `#EXTINF:${segment.duration.toFixed(3)},`,
-        `/api/cctv/media/${encodeURIComponent(cameraId)}/seg_${segment.seq}.ts?session=${entry.token}&lease=${encodeURIComponent(leaseId)}`,
+        `/api/cctv/media/${encodeURIComponent(cameraId)}/seg_${segment.seq}.${extension}?session=${entry.token}&lease=${encodeURIComponent(leaseId)}`,
       );
       previous = segment.seq;
     }
     return lines.join('\n') + '\n';
   };
-  const getSegment = (cameraId, token, seq, leaseId = 'legacy') => {
+  const getSegment = (cameraId, token, seq, leaseId = 'legacy', transport) => {
     const entry = active.get(cameraId);
-    if (!entry || entry.token !== token || !entry.leases.has(leaseId))
+    if (
+      !entry ||
+      entry.token !== token ||
+      !entry.leases.has(leaseId) ||
+      (transport && entry.transport !== transport)
+    )
       return null;
     const body = entry.segments.get(seq)?.body;
+    if (body) touch(entry, leaseId);
+    return body || null;
+  };
+  const getInit = (cameraId, token, leaseId = 'legacy') => {
+    const entry = active.get(cameraId);
+    if (
+      !entry ||
+      entry.token !== token ||
+      !entry.leases.has(leaseId) ||
+      entry.transport !== 'fmp4'
+    )
+      return null;
+    const body = entry.init?.body;
     if (body) touch(entry, leaseId);
     return body || null;
   };
@@ -337,6 +423,7 @@ export function createHlsPuller({
     waitReady,
     buildPlaylist,
     getSegment,
+    getInit,
     stop,
     release,
     shutdown,

@@ -70,6 +70,135 @@
   margin-bottom: 0;
 }
 
+.cctv-quick-start {
+  width: 100%;
+  min-height: 34px;
+  color: #bff7ff;
+  border-color: rgba(0, 212, 255, 0.62);
+  background: linear-gradient(
+    90deg,
+    rgba(0, 212, 255, 0.2),
+    rgba(0, 212, 255, 0.08)
+  );
+  letter-spacing: 1.4px;
+}
+
+.cctv-quick-start:focus-visible,
+.cctv-browse-grid select:focus-visible,
+#cctv-search:focus-visible,
+.cctv-feed-filter button:focus-visible {
+  outline: 2px solid var(--text-primary);
+  outline-offset: 2px;
+}
+
+.cctv-browse-summary {
+  padding: 7px 9px;
+  border: 1px solid rgba(0, 212, 255, 0.22);
+  border-radius: 8px;
+  color: #a8f7ff;
+  background: rgba(0, 212, 255, 0.06);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.9px;
+  line-height: 1.45;
+}
+
+.cctv-browse-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 7px;
+}
+
+.cctv-browse-grid label {
+  display: grid;
+  gap: 3px;
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1.2px;
+}
+
+.cctv-browse-grid select,
+#cctv-search {
+  width: 100%;
+  min-width: 0;
+  color: var(--text-primary);
+  background: rgba(255, 255, 255, 0.06);
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 7px;
+  padding: 6px 8px;
+  font-family: var(--font-sans);
+  font-size: 11px;
+}
+
+.cctv-feed-filter {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.cctv-feed-filter .scene-btn.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: rgba(0, 212, 255, 0.14);
+}
+
+.cctv-active-info {
+  display: grid;
+  gap: 2px;
+}
+
+.cctv-active-info[hidden] {
+  display: none;
+}
+
+.cctv-active-info strong {
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 13px;
+  line-height: 1.25;
+}
+
+.cctv-active-info span {
+  color: #8fe7ff;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.7px;
+}
+
+.cctv-video-feedback {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 2;
+  padding: 4px 7px;
+  border: 1px solid rgba(0, 212, 255, 0.38);
+  border-radius: 999px;
+  color: #bff7ff;
+  background: rgba(3, 8, 13, 0.82);
+  font-family: var(--font-mono);
+  font-size: 8px;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+
+.cctv-video-feedback[data-tone='live'],
+.cctv-video-feedback[data-tone='image'] {
+  color: #adffbf;
+  border-color: rgba(141, 255, 135, 0.45);
+}
+
+.cctv-video-feedback[data-tone='fallback'],
+.cctv-video-feedback[data-tone='connecting'] {
+  color: #ffe59b;
+  border-color: rgba(255, 205, 92, 0.48);
+}
+
+.cctv-video-feedback[data-tone='degraded'] {
+  color: #ffb0b0;
+  border-color: rgba(255, 102, 102, 0.5);
+}
+
 .cctv-calibration-block {
   border: 1px solid rgba(255, 255, 255, 0.1);
   border-radius: 9px;

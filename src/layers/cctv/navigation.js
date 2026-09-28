@@ -1,6 +1,55 @@
 import * as Cesium from 'cesium';
 import { CCTV_FOCUS_RESULT } from './policy.js';
 
+export function candidateCameraRecords(records, cameraIds) {
+  if (!Array.isArray(cameraIds)) return records;
+  const ids = new Set(cameraIds.map(String));
+  return records.filter((record) => ids.has(String(record?.camera?.id)));
+}
+
+export function candidateCycleCameraId(
+  records,
+  activeCameraId,
+  step = 1,
+  cameraIds,
+) {
+  const candidates = candidateCameraRecords(records, cameraIds);
+  if (!candidates.length) return null;
+  const current = candidates.findIndex(
+    (record) => record?.camera?.id === activeCameraId,
+  );
+  const delta = Number.isFinite(step) ? Math.trunc(step) : 1;
+  const index =
+    current < 0
+      ? delta < 0
+        ? candidates.length - 1
+        : 0
+      : (((current + delta) % candidates.length) + candidates.length) %
+        candidates.length;
+  return candidates[index]?.camera?.id || null;
+}
+
+export function nearestCandidateCameraId(
+  records,
+  lat,
+  lon,
+  haversineKm,
+  cameraIds,
+) {
+  let best = null;
+  for (const record of candidateCameraRecords(records, cameraIds)) {
+    const distance = haversineKm(
+      lat,
+      lon,
+      record.camera.lat,
+      record.camera.lon,
+    );
+    if (!best || distance < best.distance)
+      best = { id: record.camera.id, distance };
+  }
+  return best?.id || null;
+}
+
 export function createNavigation({
   state: layerState,
   services,
@@ -12,25 +61,19 @@ export function createNavigation({
    * @returns {string|null} Camera ID of the nearest camera, or null.
    */
 
-  function nearestCameraIdToViewer() {
+  function nearestCameraIdToViewer(cameraIds) {
     const carto = layerState._viewer?.camera?.positionCartographic;
     if (!carto || !layerState._records.length) return null;
     const lat = Cesium.Math.toDegrees(carto.latitude);
     const lon = Cesium.Math.toDegrees(carto.longitude);
 
-    let best = null;
-    for (const record of layerState._records) {
-      const distKm = parts.model.haversineKm(
-        lat,
-        lon,
-        record.camera.lat,
-        record.camera.lon,
-      );
-      if (!best || distKm < best.distKm) {
-        best = { id: record.camera.id, distKm };
-      }
-    }
-    return best?.id || null;
+    return nearestCandidateCameraId(
+      layerState._records,
+      lat,
+      lon,
+      parts.model.haversineKm,
+      cameraIds,
+    );
   }
 
   /**
@@ -97,7 +140,10 @@ export function createNavigation({
       !layerState._autoHop ||
       layerState._autoHopSuspended ||
       !layerState._enabled ||
-      layerState._records.length < 2
+      candidateCameraRecords(
+        layerState._records,
+        layerState._navigationCameraIds,
+      ).length < 2
     )
       return;
     if (nowMs - layerState._lastHopAt < layerState._autoHopSec * 1000) return;
@@ -107,7 +153,7 @@ export function createNavigation({
     layerState._lastViewContext = viewKey;
 
     if (viewChanged) {
-      const nearest = nearestCameraIdToViewer();
+      const nearest = nearestCameraIdToViewer(layerState._navigationCameraIds);
       if (nearest && nearest !== layerState._activeCameraId) {
         // Use setActiveCamera so the full activation path runs (obstruction
         // probe, projection runtime, geometry rewrite) — previously bypassed
@@ -118,14 +164,14 @@ export function createNavigation({
       }
     }
 
-    const nextIdx = cctvCycleIndex(
-      layerState._records.findIndex(
-        (record) => record.camera.id === layerState._activeCameraId,
-      ),
+    const nextId = candidateCycleCameraId(
+      layerState._records,
+      layerState._activeCameraId,
       1,
-      layerState._records.length,
+      layerState._navigationCameraIds,
     );
-    parts.selection.setActiveCamera(layerState._records[nextIdx].camera.id);
+    if (!nextId) return;
+    parts.selection.setActiveCamera(nextId);
     layerState._lastHopAt = nowMs;
   }
 
@@ -148,6 +194,7 @@ export function createNavigation({
     return (((Math.floor(currentIdx) + delta) % total) + total) % total;
   }
   return {
+    candidateCycleCameraId,
     nearestCameraIdToViewer,
     focusCctvRecord,
     focusCamera,

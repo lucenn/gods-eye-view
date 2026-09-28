@@ -44,6 +44,10 @@ export function createState({ services }) {
 
   layerState._autoHopSec = 18;
 
+  // Optional UI browse scope used only by auto-hop. Manual navigation passes
+  // candidates explicitly, so callers without filters retain catalog behavior.
+  layerState._navigationCameraIds = null;
+
   layerState._lastHopAt = 0;
 
   layerState._lastViewContext = '';

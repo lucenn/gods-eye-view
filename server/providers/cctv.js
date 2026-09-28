@@ -17,7 +17,7 @@ import {
   CCTV_MAX_SOURCES_CEILING,
 } from './cctv/constants.js';
 import { sanitizeCctvRangeHeader } from './cctv/range.js';
-import { createHlsPuller } from './cctv/stream.js';
+import { createHlsPuller, hlsResourceContentType } from './cctv/stream.js';
 import { googleServerApiKey } from './places/google-key.js';
 export { CCTV_FRAME_FETCH_TIMEOUT_MS, fetchCctvImageFromUpstream };
 /**
@@ -148,6 +148,7 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
               name: source.name,
               city: source.city,
               cityId: source.cityId,
+              route: source.route || '',
               provider: source.provider,
               lat: source.lat,
               lon: source.lon,
@@ -200,9 +201,10 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
         }
 
         if (url.pathname.startsWith('/media/')) {
-          const match = /^\/media\/([^/]+)(?:\/(seg_(\d+)\.ts))?$/.exec(
-            url.pathname,
-          );
+          const match =
+            /^\/media\/([^/]+)(?:\/(init\.mp4|seg_(\d+)\.(ts|mp4)))?$/.exec(
+              url.pathname,
+            );
           if (!match) {
             res.writeHead(404);
             res.end();
@@ -244,14 +246,22 @@ export function cctvProxy({ sourceRoot = process.cwd() } = {}) {
               return;
             }
             if (match[2]) {
-              const body = puller.getSegment(
-                cameraId,
-                url.searchParams.get('session'),
-                Number(match[3]),
-                leaseId,
-              );
+              const token = url.searchParams.get('session');
+              const isInit = match[2] === 'init.mp4';
+              const transport = match[4] === 'ts' ? 'mpegts' : 'fmp4';
+              const body = isInit
+                ? puller.getInit(cameraId, token, leaseId)
+                : puller.getSegment(
+                    cameraId,
+                    token,
+                    Number(match[3]),
+                    leaseId,
+                    transport,
+                  );
               res.writeHead(body ? 200 : 404, {
-                'Content-Type': 'video/mp2t',
+                'Content-Type': hlsResourceContentType(
+                  isInit ? 'fmp4' : transport,
+                ),
                 'Cache-Control': 'no-store',
               });
               res.end(body || undefined);

@@ -1,9 +1,63 @@
+import { selectDesMoinesQuickStart } from './cctvBrowse.js';
+
 export function _initCctvPanel() {
   if (!this._cctvPanel) return;
 
   this.listen(this._cctvEnableBtn, 'click', async () => {
     this._actionGeneration++;
     await this.actions.toggleEnabled();
+    if (!this.destroyed) this._renderCctvState(this._cctvState);
+  });
+
+  const rerenderBrowse = () => this._renderCctvState(this._cctvState);
+  this.listen(this._cctvRegionFilter, 'change', () => {
+    this._cctvBrowseFilters.region = this._cctvRegionFilter.value;
+    this._cctvBrowseFilters.route = 'all';
+    rerenderBrowse();
+  });
+  this.listen(this._cctvRouteFilter, 'change', () => {
+    this._cctvBrowseFilters.route = this._cctvRouteFilter.value;
+    rerenderBrowse();
+  });
+  this.listen(this._cctvSearch, 'input', () => {
+    this._cctvBrowseFilters.query = this._cctvSearch.value;
+    rerenderBrowse();
+  });
+  this.listen(this._cctvFeedFilter, 'click', (event) => {
+    const button = event.target.closest?.('[data-cctv-feed]');
+    if (!button) return;
+    this._cctvBrowseFilters.feed = button.dataset.cctvFeed;
+    rerenderBrowse();
+  });
+  this.listen(this._cctvDesMoinesLiveBtn, 'click', async () => {
+    const generation = ++this._actionGeneration;
+    Object.assign(this._cctvBrowseFilters, {
+      region: 'des-moines',
+      route: 'all',
+      feed: 'video',
+      query: '',
+    });
+    if (this._cctvRegionFilter) this._cctvRegionFilter.value = 'des-moines';
+    if (this._cctvSearch) this._cctvSearch.value = '';
+    this.actions.setPanelCollapsed('cctv-panel', false, { explicit: true });
+    this._renderCctvState(this._cctvState);
+    if (!(await this.actions.toggleEnabled(true))) return;
+    if (this.destroyed || generation !== this._actionGeneration) return;
+    this._renderCctvState(this._cctvState);
+    const camera = selectDesMoinesQuickStart(this._cctvState?.cameras);
+    if (!camera) {
+      this.actions.showToast?.('No Des Moines cameras are currently available');
+      return;
+    }
+    this._cctvPlaybackState = 'connecting';
+    this.actions.setParams(
+      { showProjection: true, selectedCameraId: camera.id },
+      { origin: 'user' },
+    );
+    this.actions.runExplicitFocus(
+      () => (this.cctv.selectCamera(camera.id) ? camera.id : null),
+      (cameraId) => this.cctv.focusCamera(cameraId, 2.2),
+    );
   });
 
   this.listen(this._cctvNearestBtn, 'click', async () => {
@@ -18,7 +72,11 @@ export function _initCctvPanel() {
     )
       return;
     this.actions.runExplicitFocus(
-      () => this.cctv.focusNearest({ focus: false }),
+      () =>
+        this.cctv.focusNearest({
+          focus: false,
+          cameraIds: this._cctvFilteredCameraIds,
+        }),
       (cameraId) => this.cctv.focusCamera(cameraId, 1.8),
     );
   });
@@ -35,7 +93,10 @@ export function _initCctvPanel() {
     )
       return;
     this.actions.runExplicitFocus(
-      () => this.cctv.cycleCamera(-1),
+      () =>
+        this.cctv.cycleCamera(-1, {
+          cameraIds: this._cctvFilteredCameraIds,
+        }),
       (cameraId) => this.cctv.focusCamera(cameraId, 1.4),
     );
   });
@@ -52,7 +113,10 @@ export function _initCctvPanel() {
     )
       return;
     this.actions.runExplicitFocus(
-      () => this.cctv.cycleCamera(1),
+      () =>
+        this.cctv.cycleCamera(1, {
+          cameraIds: this._cctvFilteredCameraIds,
+        }),
       (cameraId) => this.cctv.focusCamera(cameraId, 1.4),
     );
   });

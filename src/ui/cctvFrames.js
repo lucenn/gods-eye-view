@@ -63,11 +63,13 @@ export function _settleCctvFrame(token, src, ok) {
   this._cctvFrame.dataset.loading = '';
   this._cctvFrameWrap?.classList.remove('loading');
 
-  const syncBadge = () =>
+  const syncBadge = () => {
     this._syncCctvSourceBadge(
       this._cctvState?.activeCamera,
       !!this._cctvState?.enabled && !!this.actions.isEnabled(),
     );
+    this._syncCctvFeedStatus?.(this._cctvState?.activeCamera);
+  };
 
   if (!ok) {
     // Leave the element untouched — a settled frame stays on screen.

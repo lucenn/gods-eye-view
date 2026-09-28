@@ -64,6 +64,16 @@ export function createControls({ state: layerState, services, parts, source }) {
         if (params.autoHop) layerState._autoHopSuspended = false;
       }
       if (
+        params.navigationCameraIds === null ||
+        Array.isArray(params.navigationCameraIds)
+      ) {
+        layerState._navigationCameraIds = Array.isArray(
+          params.navigationCameraIds,
+        )
+          ? [...new Set(params.navigationCameraIds.map(String))]
+          : null;
+      }
+      if (
         typeof params.autoHopSec === 'number' &&
         Number.isFinite(params.autoHopSec)
       ) {
@@ -322,13 +332,13 @@ export function createControls({ state: layerState, services, parts, source }) {
      */
     cycleCamera(step = 1, options = {}) {
       if (!layerState._records.length) return null;
-      const current = parts.selection.getActiveRecord();
-      const nextIdx = parts.navigation.cctvCycleIndex(
-        layerState._records.findIndex((record) => record === current),
+      const nextId = parts.navigation.candidateCycleCameraId(
+        layerState._records,
+        parts.selection.getActiveRecord()?.camera?.id || null,
         step,
-        layerState._records.length,
+        options.cameraIds,
       );
-      const nextId = layerState._records[nextIdx].camera.id;
+      if (!nextId) return null;
       parts.selection.setActiveCamera(nextId);
       if (options.focus) {
         parts.navigation.focusCamera(nextId, options.durationSec || 1.8);
@@ -344,7 +354,9 @@ export function createControls({ state: layerState, services, parts, source }) {
      * @returns {string|null} The nearest camera ID, or null if none found.
      */
     focusNearest(options = {}) {
-      const nearest = parts.navigation.nearestCameraIdToViewer();
+      const nearest = parts.navigation.nearestCameraIdToViewer(
+        options.cameraIds,
+      );
       if (!nearest) return null;
       parts.selection.setActiveCamera(nearest);
       if (options.focus !== false) {

@@ -1,4 +1,13 @@
 import { createCctvVideoSurface } from './cctvVideo.js';
+import {
+  DES_MOINES_CITY_ID,
+  cctvCatalogCounts,
+  cctvFeedStatus,
+  cctvOptionLabel,
+  cctvRoutes,
+  filterCctvCameras,
+  normalizeCctvRoute,
+} from './cctvBrowse.js';
 export function _calBadgeLabel(badge) {
   switch (badge) {
     case 'calibrated':
@@ -26,6 +35,12 @@ export function _renderCctvState(state) {
   const enabled = !!state?.enabled && !!this.actions.isEnabled();
   const activeId = state?.activeCameraId || '';
   const activeCamera = state?.activeCamera || null;
+  if (activeId !== this._cctvPlaybackCameraId) {
+    this._cctvPlaybackCameraId = activeId;
+    this._cctvPlaybackState = activeCamera?.playbackState || '';
+  } else if (activeCamera?.playbackState === 'fallback') {
+    this._cctvPlaybackState = 'fallback';
+  }
 
   // Auto-expand the panel when the active camera CHANGES to a new non-null
   // id while the layer is enabled. Covers click-on-globe, panel controls,
@@ -54,22 +69,98 @@ export function _renderCctvState(state) {
     this._cctvEnableBtn.textContent = enabled ? 'CCTV ON' : 'CCTV OFF';
   }
 
-  if (this._cctvSelect) {
-    const shouldRebuild =
-      this._cctvSelect.options.length !== cameras.length ||
-      cameras.some(
-        (cam, idx) => this._cctvSelect.options[idx]?.value !== cam.id,
+  const filters = this._cctvBrowseFilters || {
+    region: 'all',
+    route: 'all',
+    feed: 'all',
+    query: '',
+  };
+  if (this._cctvRegionFilter) this._cctvRegionFilter.value = filters.region;
+  if (filters.region !== 'des-moines') filters.route = 'all';
+  const routes = cctvRoutes(cameras, DES_MOINES_CITY_ID);
+  const routeSignature = routes.join('\n');
+  if (this._cctvRouteFilter && this._cctvRouteSignature !== routeSignature) {
+    this._cctvRouteSignature = routeSignature;
+    this._cctvRouteFilter.innerHTML = '';
+    for (const route of ['all', ...routes]) {
+      const option = document.createElement('option');
+      option.value = route;
+      option.textContent = route === 'all' ? 'ALL' : route;
+      this._cctvRouteFilter.appendChild(option);
+    }
+  }
+  if (
+    filters.route !== 'all' &&
+    !routes.includes(normalizeCctvRoute(filters.route))
+  )
+    filters.route = 'all';
+  if (this._cctvRouteFilter) {
+    this._cctvRouteFilter.value = filters.route;
+    this._cctvRouteFilter.disabled = filters.region !== 'des-moines';
+  }
+  if (this._cctvSearch && this._cctvSearch.value !== filters.query)
+    this._cctvSearch.value = filters.query;
+  for (const button of this._cctvFeedFilter?.querySelectorAll?.(
+    '[data-cctv-feed]',
+  ) || []) {
+    const active = button.dataset.cctvFeed === filters.feed;
+    button.classList.toggle('active', active);
+    button.setAttribute('aria-pressed', String(active));
+  }
+  const filtered = filterCctvCameras(cameras, filters);
+  this._cctvFilteredCameraIds = filtered.map((camera) => camera.id);
+  const displayed = [...filtered];
+  if (activeCamera && !displayed.some((camera) => camera.id === activeId))
+    displayed.unshift(activeCamera);
+  const navigationSignature =
+    filters.region === 'all' &&
+    filters.route === 'all' &&
+    filters.feed === 'all' &&
+    !filters.query
+      ? 'all'
+      : this._cctvFilteredCameraIds.join('\n');
+  this._cctvNavigationSignature = navigationSignature;
+  if (
+    enabled &&
+    this.actions.setParams &&
+    navigationSignature !== this._cctvNavigationAppliedSignature
+  ) {
+    this._cctvNavigationAppliedSignature = navigationSignature;
+    queueMicrotask(() => {
+      if (this.destroyed) return;
+      this.actions.setParams(
+        {
+          navigationCameraIds:
+            navigationSignature === 'all' ? null : this._cctvFilteredCameraIds,
+        },
+        { origin: 'user' },
       );
+    });
+  }
+  const counts = cctvCatalogCounts(cameras);
+  if (this._cctvDesMoinesSummary) {
+    this._cctvDesMoinesSummary.hidden = filters.region !== 'des-moines';
+    this._cctvDesMoinesSummary.textContent = `DES MOINES · ${counts.total} CAMERAS · ${counts.video} VIDEO · ${counts.image} IMAGE`;
+  }
+
+  if (this._cctvSelect) {
+    const optionLabel = (camera) =>
+      cctvOptionLabel(camera, { includeCity: filters.region === 'all' });
+    const optionSignature = displayed
+      .map((camera) => `${camera.id}\t${optionLabel(camera)}`)
+      .join('\n');
+    const shouldRebuild = optionSignature !== this._cctvBrowseSignature;
     if (shouldRebuild) {
+      this._cctvBrowseSignature = optionSignature;
       this._cctvSelect.innerHTML = '';
-      for (const camera of cameras) {
+      for (const camera of displayed) {
         const option = document.createElement('option');
         option.value = camera.id;
-        option.textContent = `${camera.city} · ${camera.name}`;
+        option.textContent = optionLabel(camera);
         this._cctvSelect.appendChild(option);
       }
     }
-    this._cctvSelect.disabled = !enabled || cameras.length === 0;
+    this._cctvSelect.disabled = !enabled || displayed.length === 0;
     if (
       activeId &&
       Array.from(this._cctvSelect.options).some((opt) => opt.value === activeId)
@@ -86,10 +177,20 @@ export function _renderCctvState(state) {
     this._cctvNextBtn,
   ]) {
     if (!btn) continue;
-    btn.disabled = !enabled || cameras.length === 0;
+    btn.disabled = !enabled || filtered.length === 0;
   }
   if (this._cctvFocusBtn) {
     this._cctvFocusBtn.disabled = !enabled || cameras.length === 0 || !activeId;
+  }
+
+  if (this._cctvActiveInfo) this._cctvActiveInfo.hidden = !activeCamera;
+  if (this._cctvActiveName)
+    this._cctvActiveName.textContent = activeCamera?.name || '';
+  if (this._cctvActiveDetail) {
+    const route = normalizeCctvRoute(activeCamera?.route);
+    this._cctvActiveDetail.textContent = activeCamera
+      ? [route, activeCamera.provider].filter(Boolean).join(' · ')
+      : '';
   }
 
   if (this._cctvCoverageBtn) {
@@ -179,8 +280,16 @@ export function _renderCctvState(state) {
     }
     this._cctvVideoCameraId = activeId;
     if (visible && !this._cctvVideoSurface) {
-      this._cctvVideoSurface = createCctvVideoSurface(this._cctvVideo, () =>
-        this.cctv.getActiveVideoElement?.(),
+      this._cctvVideoSurface = createCctvVideoSurface(
+        this._cctvVideo,
+        () => this.cctv.getActiveVideoElement?.(),
+        {
+          onState: (playbackState) => {
+            if (this.destroyed || this._cctvVideoCameraId !== activeId) return;
+            this._cctvPlaybackState = playbackState;
+            this._syncCctvFeedStatus(activeCamera);
+          },
+        },
       );
     }
   }
@@ -209,10 +318,31 @@ export function _renderCctvState(state) {
   }
 
   this._syncCctvSourceBadge(activeCamera, enabled);
+  this._syncCctvFeedStatus(activeCamera);
   this._typeCctvSummary(
     state?.summary ||
       'Enable CCTV to start camera-linked intelligence summaries.',
   );
+}
+
+export function _syncCctvFeedStatus(activeCamera) {
+  if (!this._cctvVideoFeedback) return;
+  const status = cctvFeedStatus(activeCamera, {
+    playbackState: this._cctvPlaybackState || activeCamera?.playbackState,
+    imageReady: this._cctvFrameWrap?.classList.contains('has-frame'),
+    imageError: this._cctvFrame?.dataset.error === 'true',
+  });
+  this._cctvVideoFeedback.textContent = status.label;
+  this._cctvVideoFeedback.dataset.tone = status.tone;
+  if (this._cctvActiveDetail && activeCamera) {
+    this._cctvActiveDetail.textContent = [
+      normalizeCctvRoute(activeCamera.route),
+      activeCamera.provider,
+      status.label,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  }
 }
 
 export function _typeCctvSummary(text) {

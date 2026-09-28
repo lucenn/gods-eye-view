@@ -13,6 +13,7 @@ import {
 import {
   _calBadgeLabel,
   _renderCctvState,
+  _syncCctvFeedStatus,
   _typeCctvSummary,
   _updateCctvSyncChip,
 } from './cctvPresentation.js';
@@ -37,6 +38,17 @@ export class CctvControls {
     this._cctvFramePreloader = null;
     this._calibrationEdit = null;
     this._actionGeneration = 0;
+    this._cctvBrowseFilters = {
+      region: 'all',
+      route: 'all',
+      feed: 'all',
+      query: '',
+    };
+    this._cctvFilteredCameraIds = [];
+    this._cctvBrowseSignature = '';
+    this._cctvNavigationSignature = '';
+    this._cctvNavigationAppliedSignature = 'all';
+    this._cctvPlaybackState = '';
     this._initCctvPanel();
     if (this._cctvVideo && typeof MutationObserver !== 'undefined') {
       this._videoVisibilityObserver = new MutationObserver(() =>
@@ -99,6 +111,9 @@ export class CctvControls {
   }
   _renderCctvState(...args) {
     return _renderCctvState.call(this, ...args);
+  }
+  _syncCctvFeedStatus(...args) {
+    return _syncCctvFeedStatus.call(this, ...args);
   }
   _typeCctvSummary(...args) {
     return _typeCctvSummary.call(this, ...args);
